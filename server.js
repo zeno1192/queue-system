@@ -7,6 +7,8 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
+const PORT = process.env.PORT || 3000; // ポート番号を環境変数から取得
+
 // SQLiteデータベースのセットアップ
 const db = new sqlite3.Database('./data.db', (err) => {
     if (err) {
@@ -66,7 +68,6 @@ wss.on('connection', (ws) => {
                 if (err) throw err;
 
                 if (!user) {
-                    // ユーザーが存在しない場合、新規作成
                     db.run(`INSERT INTO users (id, has_reserved) VALUES (?, ?)`, [userId, 0]);
                     ws.send(JSON.stringify({
                         type: 'status',
@@ -76,7 +77,6 @@ wss.on('connection', (ws) => {
                         message: 'まだ予約されていません。',
                     }));
                 } else {
-                    // ユーザーが既存の場合、状態を復元
                     const waitingCount = calculateWaitingCount(user.number);
                     ws.send(JSON.stringify({
                         type: 'status',
@@ -187,6 +187,6 @@ function broadcast(data) {
 }
 
 // サーバーを起動
-server.listen(3000, () => {
-    console.log('サーバーがポート3000で起動しました');
+server.listen(PORT, () => {
+    console.log(`サーバーがポート${PORT}で起動しました`);
 });
