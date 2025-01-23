@@ -7,7 +7,7 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
-const PORT = process.env.PORT || 3000; // 環境変数PORTを使用
+const PORT = process.env.PORT || 3000;
 
 // SQLiteデータベースのセットアップ
 const db = new sqlite3.Database('./data.db', (err) => {
@@ -31,7 +31,8 @@ db.serialize(() => {
     db.run(`CREATE TABLE IF NOT EXISTS users (
         id TEXT PRIMARY KEY,
         number INTEGER,
-        has_reserved INTEGER
+        has_reserved INTEGER,
+        reserved_at DATETIME
     )`);
 });
 
@@ -39,6 +40,7 @@ db.serialize(() => {
 let currentNumbers = [];
 let queue = [];
 let usedNumbers = new Set(); // 使用済み番号を追跡
+let timers = new Map(); // タイマーを管理
 
 // サーバー起動時にデータベースから復元
 db.serialize(() => {
@@ -117,8 +119,12 @@ wss.on('connection', (ws) => {
 
                 // 未使用の番号を取得
                 const number = getNextAvailableNumber();
+                const now = new Date(); // 現在時刻を取得
 
-                db.run(`UPDATE users SET number = ?, has_reserved = 1 WHERE id = ?`, [number, userId]);
+                db.run(
+                    `UPDATE users SET number = ?, has_reserved = 1, reserved_at = ? WHERE id = ?`,
+                    [number, now.toISOString(), userId]
+                );
                 usedNumbers.add(number); // 使用済み番号として登録
 
                 ws.send(JSON.stringify({
@@ -131,6 +137,9 @@ wss.on('connection', (ws) => {
                 } else {
                     queue.push(number);
                 }
+
+                // 10分後にタイムアウト処理をスケジュール
+                scheduleTimeout(userId, number);
 
                 updateDatabase();
                 broadcast({
@@ -151,9 +160,15 @@ wss.on('connection', (ws) => {
                 const number = user.number;
 
                 currentNumbers = currentNumbers.filter(n => n !== number);
-                db.run(`UPDATE users SET number = NULL, has_reserved = 0 WHERE id = ?`, [userId]);
+                db.run(`UPDATE users SET number = NULL, has_reserved = 0, reserved_at = NULL WHERE id = ?`, [userId]);
 
                 usedNumbers.delete(number); // 使用済み番号から削除
+
+                // タイマーをキャンセル
+                if (timers.has(userId)) {
+                    clearTimeout(timers.get(userId));
+                    timers.delete(userId);
+                }
 
                 if (queue.length > 0) {
                     currentNumbers.push(queue.shift());
@@ -170,21 +185,30 @@ wss.on('connection', (ws) => {
     });
 });
 
-// 番号リセット用エンドポイント
-app.get('/reset', (req, res) => {
-    db.serialize(() => {
-        db.run(`DELETE FROM queue`);
-        db.run(`DELETE FROM current_numbers`);
-        db.run(`UPDATE users SET number = NULL, has_reserved = 0`);
-    });
+// タイムアウト処理をスケジュール
+function scheduleTimeout(userId, number) {
+    const timeout = setTimeout(() => {
+        console.log(`予約がタイムアウトしました: ${number}`);
 
-    // 状態をリセット
-    currentNumbers = [];
-    queue = [];
-    usedNumbers.clear();
+        currentNumbers = currentNumbers.filter(n => n !== number);
+        queue = queue.filter(n => n !== number);
+        usedNumbers.delete(number);
 
-    res.send('データベースがリセットされました');
-});
+        db.run(`UPDATE users SET number = NULL, has_reserved = 0, reserved_at = NULL WHERE id = ?`, [userId]);
+
+        updateDatabase();
+        broadcast({
+            type: 'updateQueue',
+            currentNumbers: currentNumbers,
+            waiting: queue.length,
+        });
+
+        // タイマーを削除
+        timers.delete(userId);
+    }, 10 * 60 * 1000); // 10分後
+
+    timers.set(userId, timeout);
+}
 
 // 次に使用可能な番号を取得
 function getNextAvailableNumber() {
