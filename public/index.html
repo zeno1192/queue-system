@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>フードコート予約システム</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <h1>フードコート予約システム</h1>
+    <button id="reserveButton">予約する</button>
+    <button id="completeButton" disabled>受け取り完了</button>
+    <p id="status"></p>
+    <p>現在呼び出し中の番号: <span id="currentNumbers">-</span></p>
+    <p>あと <span id="waitingCount">-</span> 人待ち</p>
+
+    <script>
+        const ws = new WebSocket('ws://localhost:3000');
+        const reserveButton = document.getElementById('reserveButton');
+        const completeButton = document.getElementById('completeButton');
+        const status = document.getElementById('status');
+        const currentNumbers = document.getElementById('currentNumbers');
+        const waitingCount = document.getElementById('waitingCount');
+
+        let myNumber = null;
+        const userId = localStorage.getItem('userId') || generateUUID();
+        localStorage.setItem('userId', userId);
+
+        // サーバーに接続時にユーザーIDを送信
+        ws.onopen = () => {
+            ws.send(JSON.stringify({ action: 'connect', userId }));
+        };
+
+        // 予約ボタンをクリック
+        reserveButton.addEventListener('click', () => {
+            ws.send(JSON.stringify({ action: 'reserve', userId }));
+        });
+
+        // 受け取り完了ボタンをクリック
+        completeButton.addEventListener('click', () => {
+            if (myNumber) {
+                ws.send(JSON.stringify({ action: 'complete', userId }));
+                completeButton.disabled = true;
+                status.textContent = "受け取りが完了しました！再度予約が可能です。";
+                reserveButton.disabled = false;
+            }
+        });
+
+        // WebSocketからのメッセージを処理
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+
+            if (data.type === 'reserved') {
+                myNumber = data.number;
+                status.textContent = `あなたの番号: ${myNumber}`;
+                completeButton.disabled = false;
+                reserveButton.disabled = true;
+            } else if (data.type === 'updateQueue') {
+                currentNumbers.textContent = data.currentNumbers.join(', ') || '-';
+                waitingCount.textContent = data.waiting;
+            } else if (data.type === 'status') {
+                if (data.hasReserved) {
+                    myNumber = data.number;
+                    status.textContent = data.message;
+                    completeButton.disabled = false;
+                    reserveButton.disabled = true;
+                } else {
+                    status.textContent = data.message;
+                }
+                currentNumbers.textContent = data.currentNumbers.join(', ') || '-';
+                waitingCount.textContent = data.waiting;
+            } else if (data.type === 'error') {
+                alert(data.message);
+            }
+        };
+
+        // UUIDを生成
+        function generateUUID() {
+            return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+                const r = (Math.random() * 16) | 0;
+                const v = c === 'x' ? r : (r & 0x3) | 0x8;
+                return v.toString(16);
+            });
+        }
+    </script>
+</body>
+</html>
