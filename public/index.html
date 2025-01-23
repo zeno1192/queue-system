@@ -15,7 +15,8 @@
     <p>あと <span id="waitingCount">-</span> 人待ち</p>
 
     <script>
-        const ws = new WebSocket('ws://localhost:3000');
+        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const ws = new WebSocket(`${wsProtocol}//${window.location.host}`);
         const reserveButton = document.getElementById('reserveButton');
         const completeButton = document.getElementById('completeButton');
         const status = document.getElementById('status');
@@ -85,3 +86,4 @@
     </script>
 </body>
 </html>
+
