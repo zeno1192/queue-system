@@ -7,7 +7,7 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3000; // 環境変数PORTを使用
 
 // SQLiteデータベースのセットアップ
 const db = new sqlite3.Database('./data.db', (err) => {
@@ -168,6 +168,22 @@ wss.on('connection', (ws) => {
             });
         }
     });
+});
+
+// 番号リセット用エンドポイント
+app.get('/reset', (req, res) => {
+    db.serialize(() => {
+        db.run(`DELETE FROM queue`);
+        db.run(`DELETE FROM current_numbers`);
+        db.run(`UPDATE users SET number = NULL, has_reserved = 0`);
+    });
+
+    // 状態をリセット
+    currentNumbers = [];
+    queue = [];
+    usedNumbers.clear();
+
+    res.send('データベースがリセットされました');
 });
 
 // 次に使用可能な番号を取得
