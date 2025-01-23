@@ -7,7 +7,7 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
-const PORT = process.env.PORT || 3000; // ポート番号を環境変数から取得
+const PORT = process.env.PORT || 3000;
 
 // SQLiteデータベースのセットアップ
 const db = new sqlite3.Database('./data.db', (err) => {
@@ -35,20 +35,28 @@ db.serialize(() => {
     )`);
 });
 
-// 呼び出し中番号と待機中番号を初期化
+// 呼び出し中番号、待機中番号、使用済み番号リスト
 let currentNumbers = [];
 let queue = [];
+let usedNumbers = new Set(); // 使用済み番号を追跡
 
 // サーバー起動時にデータベースから復元
 db.serialize(() => {
     db.all(`SELECT number FROM current_numbers`, [], (err, rows) => {
         if (err) throw err;
         currentNumbers = rows.map(row => row.number);
+        currentNumbers.forEach(num => usedNumbers.add(num));
     });
 
     db.all(`SELECT number FROM queue`, [], (err, rows) => {
         if (err) throw err;
         queue = rows.map(row => row.number);
+        queue.forEach(num => usedNumbers.add(num));
+    });
+
+    db.all(`SELECT number FROM users WHERE has_reserved = 1`, [], (err, rows) => {
+        if (err) throw err;
+        rows.forEach(row => usedNumbers.add(row.number));
     });
 });
 
@@ -107,9 +115,12 @@ wss.on('connection', (ws) => {
                     return;
                 }
 
-                const number = queue.length > 0 ? queue.shift() : currentNumbers.length + queue.length + 1;
+                // 未使用の番号を取得
+                const number = getNextAvailableNumber();
 
                 db.run(`UPDATE users SET number = ?, has_reserved = 1 WHERE id = ?`, [number, userId]);
+                usedNumbers.add(number); // 使用済み番号として登録
+
                 ws.send(JSON.stringify({
                     type: 'reserved',
                     number: number,
@@ -142,6 +153,8 @@ wss.on('connection', (ws) => {
                 currentNumbers = currentNumbers.filter(n => n !== number);
                 db.run(`UPDATE users SET number = NULL, has_reserved = 0 WHERE id = ?`, [userId]);
 
+                usedNumbers.delete(number); // 使用済み番号から削除
+
                 if (queue.length > 0) {
                     currentNumbers.push(queue.shift());
                 }
@@ -156,6 +169,15 @@ wss.on('connection', (ws) => {
         }
     });
 });
+
+// 次に使用可能な番号を取得
+function getNextAvailableNumber() {
+    let number = 1;
+    while (usedNumbers.has(number)) {
+        number++;
+    }
+    return number;
+}
 
 // 待機人数を計算
 function calculateWaitingCount(userNumber) {
